@@ -9,6 +9,8 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using Microsoft.Win32;
 
 namespace MultiPointAutoClicker;
 
@@ -45,6 +47,9 @@ public partial class MainWindow : Window
     private int _nextId = 1;
     private string _telegramToken = string.Empty;
     private string _telegramChatId = string.Empty;
+    private string _alertImagePath = string.Empty;
+    private CancellationTokenSource? _telegramPollingCancellation;
+    private long _telegramUpdateOffset;
     private static readonly string TelegramSettingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MultiPointAutoClicker", "telegram.json");
 
     public ObservableCollection<ClickPoint> Points { get; } = new();
@@ -68,6 +73,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = this;
         LoadTelegramSettings();
+        StartTelegramPolling();
         _hook = WindowHook;
         SourceInitialized += (_, _) =>
         {
@@ -82,6 +88,7 @@ public partial class MainWindow : Window
         {
             StopClicking();
             _ocrCancellation?.Cancel();
+            _telegramPollingCancellation?.Cancel();
             var handle = new WindowInteropHelper(this).Handle;
             UnregisterHotKey(handle, HotkeyF6);
             UnregisterHotKey(handle, HotkeyF8);
@@ -229,6 +236,7 @@ public partial class MainWindow : Window
             using var doc = JsonDocument.Parse(File.ReadAllText(TelegramSettingsPath));
             var root = doc.RootElement;
             _telegramChatId = root.TryGetProperty("chatId", out var chat) ? chat.GetString() ?? "" : "";
+            _alertImagePath = root.TryGetProperty("alertImagePath", out var image) ? image.GetString() ?? "" : "";
             var encrypted = root.TryGetProperty("token", out var token) ? token.GetString() : null;
             if (!string.IsNullOrWhiteSpace(encrypted))
             {
@@ -237,6 +245,7 @@ public partial class MainWindow : Window
                 TelegramTokenBox.Password = _telegramToken;
             }
             TelegramChatIdBox.Text = _telegramChatId;
+            UpdateAlertImagePreview();
             TelegramStatusText.Text = string.IsNullOrWhiteSpace(_telegramToken) ? "Не подключён · введи токен бота" : "Настройки загружены · токен защищён Windows";
         }
         catch { TelegramStatusText.Text = "Не удалось прочитать настройки · введи токен заново"; }
@@ -249,9 +258,112 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(_telegramToken)) throw new InvalidOperationException("Сначала введи токен Telegram-бота.");
         Directory.CreateDirectory(Path.GetDirectoryName(TelegramSettingsPath)!);
         var data = ProtectedData.Protect(Encoding.UTF8.GetBytes(_telegramToken), null, DataProtectionScope.CurrentUser);
-        File.WriteAllText(TelegramSettingsPath, JsonSerializer.Serialize(new { token = Convert.ToBase64String(data), chatId = _telegramChatId }));
+        File.WriteAllText(TelegramSettingsPath, JsonSerializer.Serialize(new { token = Convert.ToBase64String(data), chatId = _telegramChatId, alertImagePath = _alertImagePath }));
+        StartTelegramPolling();
         TelegramStatusText.Text = "Настройки сохранены локально и защищены Windows.";
     }
+    private void ChooseAlertImage_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Выбери картинку для уведомления",
+            Filter = "Изображения|*.png;*.jpg;*.jpeg;*.webp;*.bmp|Все файлы|*.*"
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        _alertImagePath = dialog.FileName;
+        UpdateAlertImagePreview();
+        try { SaveTelegramSettings(); TelegramStatusText.Text = "Картинка выбрана и путь сохранён."; }
+        catch (Exception ex) { TelegramStatusText.Text = "Картинка выбрана, но настройки не сохранены: " + ex.Message; }
+    }
+
+    private void UpdateAlertImagePreview()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_alertImagePath) || !File.Exists(_alertImagePath))
+            {
+                AlertImagePreview.Source = null;
+                AlertImageName.Text = "Картинка не выбрана";
+                return;
+            }
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.UriSource = new Uri(_alertImagePath);
+            bitmap.DecodePixelWidth = 180;
+            bitmap.EndInit();
+            AlertImagePreview.Source = bitmap;
+            AlertImageName.Text = Path.GetFileName(_alertImagePath);
+        }
+        catch
+        {
+            AlertImagePreview.Source = null;
+            AlertImageName.Text = "Не удалось открыть изображение";
+        }
+    }
+
+    private void StartTelegramPolling()
+    {
+        _telegramPollingCancellation?.Cancel();
+        if (string.IsNullOrWhiteSpace(_telegramToken) || string.IsNullOrWhiteSpace(_telegramChatId)) return;
+        _telegramPollingCancellation = new CancellationTokenSource();
+        _ = TelegramPollingLoopAsync(_telegramPollingCancellation.Token);
+    }
+
+    private async Task TelegramPollingLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                var updates = await TelegramService.GetUpdatesAsync(_telegramToken, _telegramUpdateOffset, cancellationToken);
+                foreach (var update in updates)
+                {
+                    _telegramUpdateOffset = Math.Max(_telegramUpdateOffset, update.UpdateId + 1);
+                    // Принимаем команды только из личного чата, чей ID сохранён в настройках,
+                    // и только от пользователя с тем же Telegram ID.
+                    if (update.ChatId != _telegramChatId || update.FromId != _telegramChatId) continue;
+                    await HandleTelegramCommandAsync(update.Text, cancellationToken);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
+            catch (Exception ex)
+            {
+                await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "Связь с Telegram: " + ex.Message);
+                try { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken); }
+                catch (OperationCanceledException) { break; }
+            }
+        }
+    }
+
+    private async Task HandleTelegramCommandAsync(string? command, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(command)) return;
+        var normalized = command.Trim().ToLowerInvariant();
+        if (normalized is "▶ запустить" or "/start_clicker" or "запустить")
+        {
+            var canStart = await Dispatcher.InvokeAsync(() =>
+            {
+                if (Points.Count == 0) return false;
+                _ = StartClickingAsync();
+                return true;
+            });
+            await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId,
+                canStart ? "Команда запуска принята." : "Не могу запустить: сначала добавь точки в приложении на ПК.");
+        }
+        else if (normalized is "■ остановить" or "/stop_clicker" or "остановить")
+        {
+            await Dispatcher.InvokeAsync(() => StopClicking());
+            await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, "Команда остановки принята.");
+        }
+        else if (normalized is "ℹ статус" or "/status" or "статус")
+        {
+            var running = await Dispatcher.InvokeAsync(() => _isRunning);
+            await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId,
+                running ? "Статус: 🟢 автокликер работает." : "Статус: ⚪ автокликер остановлен.");
+        }
+    }
+
     private void TelegramSave_Click(object sender, RoutedEventArgs e)
     { try { SaveTelegramSettings(); } catch (Exception ex) { TelegramStatusText.Text = ex.Message; } }
     private async void TelegramGetChatId_Click(object sender, RoutedEventArgs e)
@@ -259,6 +371,7 @@ public partial class MainWindow : Window
         try
         {
             SaveTelegramSettings();
+            _telegramPollingCancellation?.Cancel();
             TelegramStatusText.Text = "Ищем сообщение от тебя…";
             var id = await TelegramService.GetLatestChatIdAsync(_telegramToken);
             if (string.IsNullOrWhiteSpace(id)) { TelegramStatusText.Text = "Сообщение не найдено · отправь боту /start и повтори"; return; }
@@ -276,7 +389,9 @@ public partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(_telegramChatId)) throw new InvalidOperationException("Сначала нажми «Получить Chat ID».");
             TelegramStatusText.Text = "Отправляем тест…";
             await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, "MultiPoint AutoClicker подключён! Уведомления будут приходить, когда OCR обнаружит «Решите пример».");
-            TelegramStatusText.Text = "Тест отправлен · проверь Telegram на телефоне.";
+            await TelegramService.SendControlPanelAsync(_telegramToken, _telegramChatId);
+            StartTelegramPolling();
+            TelegramStatusText.Text = "Тест и пульт управления отправлены · проверь Telegram на телефоне.";
         }
         catch (Exception ex) { TelegramStatusText.Text = "Не удалось отправить: " + ex.Message; }
     }
@@ -285,7 +400,11 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(_telegramToken) || string.IsNullOrWhiteSpace(_telegramChatId)) { await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "OCR сработал, но Telegram ещё не настроен."); return; }
         try
         {
-            await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, "Обнаружена фраза «Решите пример»! Автокликер автоматически остановлен.");
+            const string alert = "Обнаружена фраза «Решите пример»! Автокликер автоматически остановлен.";
+            if (!string.IsNullOrWhiteSpace(_alertImagePath) && File.Exists(_alertImagePath))
+                await TelegramService.SendPhotoAsync(_telegramToken, _telegramChatId, _alertImagePath, alert);
+            else
+                await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, alert);
             await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "Уведомление отправлено в Telegram.");
         }
         catch (Exception ex) { await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "Ошибка Telegram: " + ex.Message); }
