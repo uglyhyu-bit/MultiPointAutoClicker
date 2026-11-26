@@ -34,7 +34,7 @@ public static class OcrService
             token.ThrowIfCancellationRequested();
             using var bitmap = CaptureScreen();
             using var memory = new MemoryStream();
-            bitmap.Save(memory, ImageFormat.Png);
+            bitmap.Save(memory, System.Drawing.Imaging.ImageFormat.Png);
             using var pix = Pix.LoadFromMemory(memory.ToArray());
             using var page = engine.Process(pix);
             var recognizedText = page.GetText() ?? string.Empty;
