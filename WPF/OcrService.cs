@@ -7,74 +7,99 @@ using Tesseract;
 
 namespace MultiPointAutoClicker;
 
+public sealed record MathTask(string Expression, int CorrectAnswer, int[] Options, int CorrectOptionIndex, int ScreenWidth, int ScreenHeight, string RawText);
+
 public static class OcrService
 {
-    private const int SmXVirtualScreen = 76;
-    private const int SmYVirtualScreen = 77;
-    private const int SmCxVirtualScreen = 78;
-    private const int SmCyVirtualScreen = 79;
+    private const int SmXVirtualScreen = 76, SmYVirtualScreen = 77, SmCxVirtualScreen = 78, SmCyVirtualScreen = 79;
+    [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
 
-    [DllImport("user32.dll")]
-    private static extern int GetSystemMetrics(int index);
+    private static readonly Dictionary<string, int> NumberWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["ноль"] = 0, ["один"] = 1, ["одна"] = 1, ["два"] = 2, ["две"] = 2, ["три"] = 3,
+        ["четыре"] = 4, ["пять"] = 5, ["шесть"] = 6, ["семь"] = 7, ["восемь"] = 8,
+        ["девять"] = 9, ["десять"] = 10, ["одиннадцать"] = 11, ["двенадцать"] = 12,
+        ["тринадцать"] = 13, ["четырнадцать"] = 14, ["пятнадцать"] = 15,
+        ["шестнадцать"] = 16, ["семнадцать"] = 17, ["восемнадцать"] = 18,
+        ["девятнадцать"] = 19, ["двадцать"] = 20
+    };
 
-    public static async Task WatchForExampleAsync(Func<string, Task> onDetected, CancellationToken token)
+    public static async Task WatchForExampleAsync(Func<MathTask, Task> onDetected, CancellationToken token)
     {
         var dataPath = Path.Combine(AppContext.BaseDirectory, "tessdata");
-        if (!File.Exists(Path.Combine(dataPath, "rus.traineddata")) ||
-            !File.Exists(Path.Combine(dataPath, "eng.traineddata")))
-        {
+        if (!File.Exists(Path.Combine(dataPath, "rus.traineddata")) || !File.Exists(Path.Combine(dataPath, "eng.traineddata")))
             throw new DirectoryNotFoundException("Не найдены языковые файлы OCR. Переустанови последнюю сборку программы.");
-        }
 
         using var engine = new TesseractEngine(dataPath, "rus+eng", EngineMode.Default);
-        engine.DefaultPageSegMode = PageSegMode.Auto;
-
+        engine.DefaultPageSegMode = PageSegMode.SparseText;
         while (!token.IsCancellationRequested)
         {
             token.ThrowIfCancellationRequested();
-            using var bitmap = CaptureScreen();
+            using var capture = CaptureCenter();
             using var memory = new MemoryStream();
-            bitmap.Save(memory, System.Drawing.Imaging.ImageFormat.Png);
+            capture.Bitmap.Save(memory, ImageFormat.Png);
             using var pix = Pix.LoadFromMemory(memory.ToArray());
             using var page = engine.Process(pix);
-            var recognizedText = page.GetText() ?? string.Empty;
-
-            if (ContainsTargetPhrase(recognizedText))
+            var text = page.GetText() ?? string.Empty;
+            if (TryParseMathTask(text, capture.ScreenWidth, capture.ScreenHeight, out var task))
             {
-                await onDetected(recognizedText);
+                await onDetected(task!);
                 return;
             }
-
-            await Task.Delay(TimeSpan.FromMilliseconds(900), token);
+            await Task.Delay(700, token);
         }
     }
 
-    private static Bitmap CaptureScreen()
+    private sealed record ScreenCapture(Bitmap Bitmap, int ScreenWidth, int ScreenHeight);
+    private static ScreenCapture CaptureCenter()
     {
-        var left = GetSystemMetrics(SmXVirtualScreen);
-        var top = GetSystemMetrics(SmYVirtualScreen);
-        var width = GetSystemMetrics(SmCxVirtualScreen);
-        var height = GetSystemMetrics(SmCyVirtualScreen);
-        if (width <= 0 || height <= 0)
-            throw new InvalidOperationException("Не удалось определить размер экрана.");
-
-        var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+        var left = GetSystemMetrics(SmXVirtualScreen); var top = GetSystemMetrics(SmYVirtualScreen);
+        var width = GetSystemMetrics(SmCxVirtualScreen); var height = GetSystemMetrics(SmCyVirtualScreen);
+        if (width <= 0 || height <= 0) throw new InvalidOperationException("Не удалось определить размер экрана.");
+        // Плашка игры находится по центру. Захватываем только центральную область, чтобы ускорить OCR.
+        var cropWidth = Math.Min(width, (int)(width * 0.34));
+        var cropHeight = Math.Min(height, (int)(height * 0.62));
+        var x = left + (width - cropWidth) / 2; var y = top + (height - cropHeight) / 2;
+        var bitmap = new Bitmap(cropWidth, cropHeight, PixelFormat.Format32bppArgb);
         try
         {
             using var graphics = Graphics.FromImage(bitmap);
-            graphics.CopyFromScreen(left, top, 0, 0, new Size(width, height), CopyPixelOperation.SourceCopy);
-            return bitmap;
+            graphics.CopyFromScreen(x, y, 0, 0, new Size(cropWidth, cropHeight), CopyPixelOperation.SourceCopy);
+            return new(bitmap, width, height);
         }
-        catch
-        {
-            bitmap.Dispose();
-            throw;
-        }
+        catch { bitmap.Dispose(); throw; }
     }
 
-    private static bool ContainsTargetPhrase(string text)
+    private static bool TryParseMathTask(string text, int screenWidth, int screenHeight, out MathTask? task)
     {
-        var normalized = Regex.Replace(text.ToLowerInvariant(), @"[^\p{L}\p{N}]+", " ");
-        return normalized.Contains("решите") && normalized.Contains("пример");
+        task = null;
+        var normalized = text.ToLowerInvariant().Replace('ё', 'е');
+        normalized = Regex.Replace(normalized, @"(?<=\d)\s*[хx]\s*(?=\d)", " * ");
+        var match = Regex.Match(normalized, @"(ноль|один|одна|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать|тринадцать|четырнадцать|пятнадцать|шестнадцать|семнадцать|восемнадцать|девятнадцать|двадцать|\d{1,2})\s*(\+|\-|−|\*|×|х|x|÷|/)\s*(ноль|один|одна|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать|тринадцать|четырнадцать|пятнадцать|шестнадцать|семнадцать|восемнадцать|девятнадцать|двадцать|\d{1,2})", normalized);
+        if (!match.Success) return false;
+        if (!TryNumber(match.Groups[1].Value, out var a) || !TryNumber(match.Groups[3].Value, out var b)) return false;
+        int answer = match.Groups[2].Value switch
+        {
+            "+" => a + b, "-" or "−" => a - b, "*" or "×" or "х" or "x" => a * b,
+            "÷" or "/" when b != 0 && a % b == 0 => a / b, _ => int.MinValue
+        };
+        if (answer == int.MinValue || answer < 0 || answer > 400) return false;
+
+        var tail = normalized[(match.Index + match.Length)..];
+        var values = Regex.Matches(tail, @"(?<![\p{L}\d])\d{1,3}(?![\p{L}\d])").Select(m => int.Parse(m.Value)).ToList();
+        // В плашке сначала может быть строка цены; берём последние пять чисел как варианты ответа.
+        if (values.Count < 5) return false;
+        var options = values.TakeLast(5).ToArray();
+        var index = Array.IndexOf(options, answer);
+        if (index < 0) return false;
+        var expression = $"{match.Groups[1].Value} {match.Groups[2].Value} {match.Groups[3].Value} = ?";
+        task = new MathTask(expression, answer, options, index, screenWidth, screenHeight, text);
+        return true;
+    }
+
+    private static bool TryNumber(string value, out int number)
+    {
+        if (int.TryParse(value, out number)) return true;
+        return NumberWords.TryGetValue(value.Replace('ё', 'е'), out number);
     }
 }

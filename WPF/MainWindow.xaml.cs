@@ -44,6 +44,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _ocrCancellation;
     private bool _isRunning;
     private bool _ocrTriggered;
+    private MathTask? _pendingMathTask;
     private int _nextId = 1;
     private string _telegramToken = string.Empty;
     private string _telegramChatId = string.Empty;
@@ -56,6 +57,7 @@ public partial class MainWindow : Window
 
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint key);
     [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out NativePoint point);
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] private static extern uint SendInput(uint count, Input[] inputs, int size);
@@ -340,7 +342,25 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(command)) return;
         var normalized = command.Trim().ToLowerInvariant();
-        if (normalized is "▶ запустить" or "/start_clicker" or "запустить")
+        if (normalized is "да" or "подтверждаю" or "подтвердить ответ" or "ответить")
+        {
+            var approved = await Dispatcher.InvokeAsync(() =>
+            {
+                if (_pendingMathTask is null) return false;
+                var pending = _pendingMathTask;
+                _pendingMathTask = null;
+                ClickMathAnswer(pending);
+                return true;
+            });
+            await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId,
+                approved ? "Подтверждение принято. Выбран правильный вариант и нажата кнопка «Ответить»." : "Сейчас нет ожидающего задания.");
+        }
+        else if (normalized is "нет" or "отмена" or "отменить")
+        {
+            var cancelled = await Dispatcher.InvokeAsync(() => { var hadTask = _pendingMathTask is not null; _pendingMathTask = null; return hadTask; });
+            await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, cancelled ? "Ответ отменён. Ничего не нажимал." : "Нет задания для отмены.");
+        }
+        else if (normalized is "▶ запустить" or "/start_clicker" or "запустить")
         {
             var canStart = await Dispatcher.InvokeAsync(() =>
             {
@@ -388,51 +408,82 @@ public partial class MainWindow : Window
             SaveTelegramSettings();
             if (string.IsNullOrWhiteSpace(_telegramChatId)) throw new InvalidOperationException("Сначала нажми «Получить Chat ID».");
             TelegramStatusText.Text = "Отправляем тест…";
-            await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, "MultiPoint AutoClicker подключён! Уведомления будут приходить, когда OCR обнаружит «Решите пример».");
+            await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, "MultiPoint AutoClicker подключён! OCR ищет математическую плашку в центре экрана. После распознавания пришлёт пример и будет ждать твоего подтверждения.");
             await TelegramService.SendControlPanelAsync(_telegramToken, _telegramChatId);
             StartTelegramPolling();
             TelegramStatusText.Text = "Тест и пульт управления отправлены · проверь Telegram на телефоне.";
         }
         catch (Exception ex) { TelegramStatusText.Text = "Не удалось отправить: " + ex.Message; }
     }
-    private async Task SendTelegramAlertAsync()
+    private async Task SendTelegramMathTaskAsync(MathTask task)
     {
-        if (string.IsNullOrWhiteSpace(_telegramToken) || string.IsNullOrWhiteSpace(_telegramChatId)) { await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "OCR сработал, но Telegram ещё не настроен."); return; }
+        if (string.IsNullOrWhiteSpace(_telegramToken) || string.IsNullOrWhiteSpace(_telegramChatId))
+        {
+            await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "Задание распознано, но Telegram ещё не настроен.");
+            return;
+        }
         try
         {
-            const string alert = "Обнаружена фраза «Решите пример»! Автокликер автоматически остановлен.";
+            var options = string.Join(" · ", task.Options.Select((value, index) => index == task.CorrectOptionIndex ? $"[{value}]" : value.ToString()));
+            var message = "🧮 Найден математический пример\n\n" + task.Expression + "\n" +
+                $"Ответ: {task.CorrectAnswer}\nВарианты: {options}\n\n" +
+                "Проверь распознавание. Напиши ПОДТВЕРЖДАЮ, чтобы выбрать вариант и нажать «Ответить».\n" +
+                "Напиши ОТМЕНА, чтобы ничего не нажимать.";
             if (!string.IsNullOrWhiteSpace(_alertImagePath) && File.Exists(_alertImagePath))
-                await TelegramService.SendPhotoAsync(_telegramToken, _telegramChatId, _alertImagePath, alert);
+                await TelegramService.SendPhotoAsync(_telegramToken, _telegramChatId, _alertImagePath, message);
             else
-                await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, alert);
-            await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "Уведомление отправлено в Telegram.");
+                await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, message);
+            await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "Пример отправлен в Telegram · ожидается подтверждение.");
         }
         catch (Exception ex) { await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "Ошибка Telegram: " + ex.Message); }
     }
+
+    private void ClickMathAnswer(MathTask task)
+    {
+        // Геометрия игровой плашки привязана к центру экрана; смещения сняты с шаблона 1914×800.
+        var screenLeft = GetSystemMetrics(76);
+        var screenTop = GetSystemMetrics(77);
+        var scale = task.ScreenHeight / 800.0;
+        var rowOffsets = new[] { -61.0, -27.0, 6.0, 39.0, 72.0 };
+        var centerX = screenLeft + task.ScreenWidth / 2;
+        var answerY = screenTop + task.ScreenHeight / 2 + (int)Math.Round(rowOffsets[task.CorrectOptionIndex] * scale);
+        var buttonY = screenTop + task.ScreenHeight / 2 + (int)Math.Round(114.0 * scale);
+        SetCursorPos(centerX, answerY);
+        SendMouse(MouseLeftDown); SendMouse(MouseLeftUp);
+        _ = Task.Delay(180).ContinueWith(_ => Dispatcher.Invoke(() =>
+        {
+            SetCursorPos(centerX, buttonY);
+            SendMouse(MouseLeftDown); SendMouse(MouseLeftUp);
+        }));
+        OcrStatusText.Text = "Подтверждено в Telegram · отправка ответа в игру";
+    }
+
     private async void OcrStart_Click(object sender, RoutedEventArgs e)
     {
         if (_ocrCancellation is not null) return;
         _ocrTriggered = false;
+        _pendingMathTask = null;
         _ocrCancellation = new CancellationTokenSource();
         OcrStartButton.IsEnabled = false;
         OcrStopButton.IsEnabled = true;
-        OcrStatusText.Text = "Активно · проверка экрана примерно раз в секунду";
+        OcrStatusText.Text = "Активно · поиск математической плашки в центре экрана";
         var token = _ocrCancellation.Token;
         try
         {
-            await Task.Run(() => OcrService.WatchForExampleAsync(async recognized =>
+            await Task.Run(() => OcrService.WatchForExampleAsync(async task =>
             {
                 await Dispatcher.InvokeAsync(() =>
                 {
                     _ocrTriggered = true;
+                    _pendingMathTask = task;
                     StopClicking();
-                    OcrStatusText.Text = "НАЙДЕНО: «Решите пример» · автокликер остановлен";
+                    OcrStatusText.Text = $"НАЙДЕНО: {task.Expression} = {task.CorrectAnswer} · ожидается Telegram";
                     OcrStartButton.IsEnabled = true;
                     OcrStopButton.IsEnabled = false;
                     _ocrCancellation?.Dispose();
                     _ocrCancellation = null;
                 }).Task;
-                await SendTelegramAlertAsync();
+                await SendTelegramMathTaskAsync(task);
             }, token), token);
         }
         catch (OperationCanceledException) { }
@@ -452,7 +503,7 @@ public partial class MainWindow : Window
                 _ocrCancellation = null;
                 OcrStartButton.IsEnabled = true;
                 OcrStopButton.IsEnabled = false;
-                if (!_ocrTriggered) OcrStatusText.Text = "Остановлено · поиск фразы «Решите пример»";
+                if (!_ocrTriggered) OcrStatusText.Text = "Остановлено · поиск математической плашки";
             }
         }
     }
