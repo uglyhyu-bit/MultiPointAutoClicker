@@ -37,7 +37,7 @@ public static class OcrService
             token.ThrowIfCancellationRequested();
             using var capture = CaptureCenter();
             using var memory = new MemoryStream();
-            capture.Bitmap.Save(memory, ImageFormat.Png);
+            capture.Bitmap.Save(memory, System.Drawing.Imaging.ImageFormat.Png);
             using var pix = Pix.LoadFromMemory(memory.ToArray());
             using var page = engine.Process(pix);
             var text = page.GetText() ?? string.Empty;
@@ -50,7 +50,11 @@ public static class OcrService
         }
     }
 
-    private sealed record ScreenCapture(Bitmap Bitmap, int ScreenWidth, int ScreenHeight);
+    private sealed record ScreenCapture(Bitmap Bitmap, int ScreenWidth, int ScreenHeight) : IDisposable
+    {
+        public void Dispose() => Bitmap.Dispose();
+    }
+
     private static ScreenCapture CaptureCenter()
     {
         var left = GetSystemMetrics(SmXVirtualScreen); var top = GetSystemMetrics(SmYVirtualScreen);
@@ -74,8 +78,8 @@ public static class OcrService
     {
         task = null;
         var normalized = text.ToLowerInvariant().Replace('ё', 'е');
-        normalized = Regex.Replace(normalized, @"(?<=\d)\s*[хx]\s*(?=\d)", " * ");
-        var match = Regex.Match(normalized, @"(ноль|один|одна|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать|тринадцать|четырнадцать|пятнадцать|шестнадцать|семнадцать|восемнадцать|девятнадцать|двадцать|\d{1,2})\s*(\+|\-|−|\*|×|х|x|÷|/)\s*(ноль|один|одна|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать|тринадцать|четырнадцать|пятнадцать|шестнадцать|семнадцать|восемнадцать|девятнадцать|двадцать|\d{1,2})", normalized);
+        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"(?<=\d)\s*[хx]\s*(?=\d)", " * ");
+        var match = System.Text.RegularExpressions.Regex.Match(normalized, @"(ноль|один|одна|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать|тринадцать|четырнадцать|пятнадцать|шестнадцать|семнадцать|восемнадцать|девятнадцать|двадцать|\d{1,2})\s*(\+|\-|−|\*|×|х|x|÷|/)\s*(ноль|один|одна|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать|тринадцать|четырнадцать|пятнадцать|шестнадцать|семнадцать|восемнадцать|девятнадцать|двадцать|\d{1,2})", normalized);
         if (!match.Success) return false;
         if (!TryNumber(match.Groups[1].Value, out var a) || !TryNumber(match.Groups[3].Value, out var b)) return false;
         int answer = match.Groups[2].Value switch
@@ -86,7 +90,7 @@ public static class OcrService
         if (answer == int.MinValue || answer < 0 || answer > 400) return false;
 
         var tail = normalized[(match.Index + match.Length)..];
-        var values = Regex.Matches(tail, @"(?<![\p{L}\d])\d{1,3}(?![\p{L}\d])").Select(m => int.Parse(m.Value)).ToList();
+        var values = System.Text.RegularExpressions.Regex.Matches(tail, @"(?<![\p{L}\d])\d{1,3}(?![\p{L}\d])").Select(m => int.Parse(m.Value)).ToList();
         // В плашке сначала может быть строка цены; берём последние пять чисел как варианты ответа.
         if (values.Count < 5) return false;
         var options = values.TakeLast(5).ToArray();
