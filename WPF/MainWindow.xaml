@@ -16,7 +16,7 @@
                 BorderThickness="1" CornerRadius="7" Padding="18">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Top">
-                    <TextBlock Text="MULTIPOINT" FontSize="17" FontWeight="SemiBold" LetterSpacing="1"/>
+                    <TextBlock Text="MULTIPOINT" FontSize="17" FontWeight="SemiBold"/>
                     <TextBlock Text="AUTOCLICKER" FontSize="10" Foreground="#777777" Margin="0,3,0,30"/>
                     <TextBlock Text="РАБОЧЕЕ ПРОСТРАНСТВО" FontSize="9" Foreground="#777777" Margin="0,0,0,12"/>
                     <Border Background="#1B1B1B" BorderBrush="#414141" BorderThickness="1"
@@ -57,7 +57,8 @@
             </Grid.RowDefinitions>
 
             <Grid Grid.Row="0" Margin="0,2,0,24">
-                <StackPanel>
+                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
                     <TextBlock Text="Точки клика" FontSize="27" FontWeight="SemiBold"/>
                     <TextBlock Text="Настрой координаты и индивидуальное время для каждой точки."
                                FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,7,0,0"/>
@@ -77,7 +78,7 @@
                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="СПИСОК ТОЧЕК" FontSize="9" Foreground="#777777"
-                               VerticalAlignment="Center" CharacterSpacing="1"/>
+                               VerticalAlignment="Center"/>
                     <TextBlock x:Name="PointCount" Text="  /  0" FontSize="9" Foreground="#BBBBBB"
                                VerticalAlignment="Center"/>
                 </StackPanel>
@@ -143,7 +144,7 @@
             <Grid Grid.Row="4" Margin="0,22,0,0">
                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock Text="УПРАВЛЕНИЕ" FontSize="9" Foreground="#777777" CharacterSpacing="1"/>
+                    <TextBlock Text="УПРАВЛЕНИЕ" FontSize="9" Foreground="#777777"/>
                     <TextBlock x:Name="StatusText" Text="Добавь точку, чтобы начать работу."
                                FontSize="11" Foreground="#B0B0B0" Margin="0,7,0,0"/>
                 </StackPanel>
