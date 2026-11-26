@@ -1,24 +1,28 @@
 name: Build Windows EXE
 
-on:
-workflow_dispatch:
-push:
-branches: [main]
+on: 
+workflow_dispatch: 
+push: 
+branches: 
+- main
 
-jobs:
-build:
-runs-on: windows-latest
-steps:
-- uses: actions/checkout@v4
+jobs: 
+build: 
+runs-on: windows-latest 
+steps: 
+- name: Checkout 
+uses: actions/checkout@v4
 
-  - uses: actions/setup-dotnet@v4
+  - name: Install .NET
+    uses: actions/setup-dotnet@v4
     with:
       dotnet-version: 8.0.x
 
   - name: Build EXE
     run: dotnet publish HET80/MultiPointAutoClicker.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
 
-  - uses: actions/upload-artifact@v4
+  - name: Upload EXE
+    uses: actions/upload-artifact@v4
     with:
       name: MultiPointAutoClicker-Windows-x64
       path: HET80/bin/Release/net8.0-windows/win-x64/publish/MultiPointAutoClicker.exe
