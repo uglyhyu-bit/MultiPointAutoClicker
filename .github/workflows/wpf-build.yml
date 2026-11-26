@@ -1,0 +1,33 @@
+name: Build WPF AutoClicker
+
+on:
+  push:
+    branches:
+      - feature/wpf-redesign
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish Windows application
+        run: dotnet publish WPF/MultiPointAutoClicker.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: MultiPointAutoClicker-Windows
+          path: ./publish/
+          if-no-files-found: error
+          retention-days: 14
