@@ -42,7 +42,7 @@
                         <TextBlock Text="Остановка" FontSize="11" Foreground="#B8B8B8"/>
                         <TextBlock Grid.Column="1" Text="F9" FontSize="11" Foreground="White"/>
                     </Grid>
-                    <TextBlock Text="v2.0  /  WPF" FontSize="9" Foreground="#555555" Margin="0,24,0,0"/>
+                    <TextBlock Text="v2.1  /  WPF + OCR" FontSize="9" Foreground="#555555" Margin="0,24,0,0"/>
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -52,6 +52,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
@@ -77,13 +78,10 @@
             <Grid Grid.Row="1" Margin="0,0,0,14">
                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="СПИСОК ТОЧЕК" FontSize="9" Foreground="#777777"
-                               VerticalAlignment="Center"/>
-                    <TextBlock x:Name="PointCount" Text="  /  0" FontSize="9" Foreground="#BBBBBB"
-                               VerticalAlignment="Center"/>
+                    <TextBlock Text="СПИСОК ТОЧЕК" FontSize="9" Foreground="#777777" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="PointCount" Text="  /  0" FontSize="9" Foreground="#BBBBBB" VerticalAlignment="Center"/>
                 </StackPanel>
-                <Button Grid.Column="1" Content="+  Добавить точку  [F6]" Click="AddPoint_Click"
-                        Padding="14,8" FontSize="11"/>
+                <Button Grid.Column="1" Content="+  Добавить точку  [F6]" Click="AddPoint_Click" Padding="14,8" FontSize="11"/>
             </Grid>
 
             <Border Grid.Row="2" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
@@ -97,29 +95,19 @@
                           BeginningEdit="PointsGrid_BeginningEdit">
                     <DataGrid.Resources>
                         <Style TargetType="DataGridColumnHeader">
-                            <Setter Property="Background" Value="#171717"/>
-                            <Setter Property="Foreground" Value="#929292"/>
-                            <Setter Property="BorderThickness" Value="0,0,0,1"/>
-                            <Setter Property="BorderBrush" Value="#303030"/>
-                            <Setter Property="Padding" Value="12,13"/>
-                            <Setter Property="FontSize" Value="10"/>
+                            <Setter Property="Background" Value="#171717"/><Setter Property="Foreground" Value="#929292"/>
+                            <Setter Property="BorderThickness" Value="0,0,0,1"/><Setter Property="BorderBrush" Value="#303030"/>
+                            <Setter Property="Padding" Value="12,13"/><Setter Property="FontSize" Value="10"/>
                             <Setter Property="FontWeight" Value="SemiBold"/>
                         </Style>
                         <Style TargetType="DataGridCell">
-                            <Setter Property="BorderThickness" Value="0"/>
-                            <Setter Property="Padding" Value="12,12"/>
-                            <Setter Property="Foreground" Value="#EAEAEA"/>
-                            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                            <Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="12,12"/>
+                            <Setter Property="Foreground" Value="#EAEAEA"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
                         </Style>
                         <Style TargetType="DataGridRow">
-                            <Setter Property="BorderThickness" Value="0,0,0,1"/>
-                            <Setter Property="BorderBrush" Value="#242424"/>
+                            <Setter Property="BorderThickness" Value="0,0,0,1"/><Setter Property="BorderBrush" Value="#242424"/>
                             <Setter Property="Foreground" Value="#EEEEEE"/>
-                            <Style.Triggers>
-                                <Trigger Property="IsSelected" Value="True">
-                                    <Setter Property="Background" Value="#252525"/>
-                                </Trigger>
-                            </Style.Triggers>
+                            <Style.Triggers><Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="#252525"/></Trigger></Style.Triggers>
                         </Style>
                     </DataGrid.Resources>
                     <DataGrid.Columns>
@@ -132,16 +120,32 @@
                 </DataGrid>
             </Border>
 
-            <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,16,0,0">
-                <Button Content="Обновить координаты" Click="UpdatePoint_Click" Margin="0,0,8,0"
-                        FontSize="11" Padding="13,9"/>
-                <Button Content="Удалить точку" Click="DeletePoint_Click" FontSize="11"
-                        Padding="13,9"/>
-                <TextBlock Text="Изменения параметров применяются после остановки."
-                           Foreground="#777777" FontSize="10" VerticalAlignment="Center" Margin="16,0,0,0"/>
+            <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,14,0,0">
+                <Button Content="Обновить координаты" Click="UpdatePoint_Click" Margin="0,0,8,0" FontSize="11" Padding="13,9"/>
+                <Button Content="Удалить точку" Click="DeletePoint_Click" FontSize="11" Padding="13,9"/>
+                <TextBlock Text="Изменения параметров применяются после остановки." Foreground="#777777"
+                           FontSize="10" VerticalAlignment="Center" Margin="16,0,0,0"/>
             </StackPanel>
 
-            <Grid Grid.Row="4" Margin="0,22,0,0">
+            <Border Grid.Row="4" Margin="0,18,0,0" Background="#101010" BorderBrush="#292929"
+                    BorderThickness="1" CornerRadius="5" Padding="14">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="РАСПОЗНАВАНИЕ ЭКРАНА · OCR" FontSize="9" Foreground="#929292"/>
+                        <TextBlock x:Name="OcrStatusText" Text="Отключено · поиск фразы «Решите пример»"
+                                   FontSize="11" Foreground="#D0D0D0" Margin="0,6,12,0"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="OcrStartButton" Content="ВКЛЮЧИТЬ OCR" Click="OcrStart_Click"
+                                Padding="15,10" FontSize="10"/>
+                        <Button x:Name="OcrStopButton" Content="ОТКЛЮЧИТЬ" Click="OcrStop_Click"
+                                Padding="15,10" FontSize="10" Margin="7,0,0,0" IsEnabled="False"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="5" Margin="0,18,0,0">
                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="УПРАВЛЕНИЕ" FontSize="9" Foreground="#777777"/>
@@ -152,8 +156,7 @@
                     <Button x:Name="StartButton" Content="▶   ЗАПУСТИТЬ  [F8]" Click="Start_Click"
                             Background="#F0F0F0" Foreground="#090909" BorderBrush="#F0F0F0"
                             FontWeight="SemiBold" Padding="22,13" Margin="0,0,8,0"/>
-                    <Button x:Name="StopButton" Content="■   СТОП  [F9]" Click="Stop_Click"
-                            Padding="22,13" IsEnabled="False"/>
+                    <Button x:Name="StopButton" Content="■   СТОП  [F9]" Click="Stop_Click" Padding="22,13" IsEnabled="False"/>
                 </StackPanel>
             </Grid>
         </Grid>

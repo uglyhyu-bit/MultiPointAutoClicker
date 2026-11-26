@@ -9,4 +9,11 @@
     <AssemblyName>MultiPointAutoClicker</AssemblyName>
     <RootNamespace>MultiPointAutoClicker</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Tesseract" Version="5.2.0" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="tessdata\*.traineddata" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

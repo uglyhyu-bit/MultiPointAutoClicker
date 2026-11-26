@@ -21,8 +21,15 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Download OCR language data
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path WPF/tessdata | Out-Null
+          Invoke-WebRequest -Uri https://github.com/tesseract-ocr/tessdata_fast/raw/main/rus.traineddata -OutFile WPF/tessdata/rus.traineddata
+          Invoke-WebRequest -Uri https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata -OutFile WPF/tessdata/eng.traineddata
+
       - name: Publish Windows application
-        run: dotnet publish WPF/MultiPointAutoClicker.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish
+        run: dotnet publish WPF/MultiPointAutoClicker.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4

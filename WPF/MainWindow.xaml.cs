@@ -12,23 +12,19 @@ public sealed class ClickPoint : INotifyPropertyChanged
 {
     private double _intervalSeconds = 2;
     private double _holdSeconds = 1;
-
     public int Id { get; init; }
     public int X { get; set; }
     public int Y { get; set; }
-
     public double IntervalSeconds
     {
         get => _intervalSeconds;
         set { _intervalSeconds = value; PropertyChanged?.Invoke(this, new(nameof(IntervalSeconds))); }
     }
-
     public double HoldSeconds
     {
         get => _holdSeconds;
         set { _holdSeconds = value; PropertyChanged?.Invoke(this, new(nameof(HoldSeconds))); }
     }
-
     public event PropertyChangedEventHandler? PropertyChanged;
 }
 
@@ -39,7 +35,9 @@ public partial class MainWindow : Window
     private const uint ModNoRepeat = 0x4000;
     private readonly HwndSourceHook _hook;
     private CancellationTokenSource? _cancellation;
+    private CancellationTokenSource? _ocrCancellation;
     private bool _isRunning;
+    private bool _ocrTriggered;
     private int _nextId = 1;
 
     public ObservableCollection<ClickPoint> Points { get; } = new();
@@ -50,29 +48,11 @@ public partial class MainWindow : Window
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] private static extern uint SendInput(uint count, Input[] inputs, int size);
 
+    [StructLayout(LayoutKind.Sequential)] private struct NativePoint { public int X; public int Y; }
+    [StructLayout(LayoutKind.Sequential)] private struct Input { public uint Type; public InputUnion Union; }
+    [StructLayout(LayoutKind.Explicit)] private struct InputUnion { [FieldOffset(0)] public MouseInput Mouse; }
     [StructLayout(LayoutKind.Sequential)]
-    private struct NativePoint { public int X; public int Y; }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Input
-    {
-        public uint Type;
-        public InputUnion Union;
-    }
-
-    [StructLayout(LayoutKind.Explicit)]
-    private struct InputUnion
-    {
-        [FieldOffset(0)] public MouseInput Mouse;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MouseInput
-    {
-        public int Dx, Dy;
-        public uint MouseData, Flags, Time;
-        public IntPtr ExtraInfo;
-    }
+    private struct MouseInput { public int Dx, Dy; public uint MouseData, Flags, Time; public IntPtr ExtraInfo; }
 
     private const uint InputMouse = 0, MouseLeftDown = 0x0002, MouseLeftUp = 0x0004;
 
@@ -83,15 +63,17 @@ public partial class MainWindow : Window
         _hook = WindowHook;
         SourceInitialized += (_, _) =>
         {
-            var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+            var handle = new WindowInteropHelper(this).Handle;
+            var source = HwndSource.FromHwnd(handle);
             source?.AddHook(_hook);
-            RegisterHotKey(new WindowInteropHelper(this).Handle, HotkeyF6, ModNoRepeat, 0x75);
-            RegisterHotKey(new WindowInteropHelper(this).Handle, HotkeyF8, ModNoRepeat, 0x77);
-            RegisterHotKey(new WindowInteropHelper(this).Handle, HotkeyF9, ModNoRepeat, 0x78);
+            RegisterHotKey(handle, HotkeyF6, ModNoRepeat, 0x75);
+            RegisterHotKey(handle, HotkeyF8, ModNoRepeat, 0x77);
+            RegisterHotKey(handle, HotkeyF9, ModNoRepeat, 0x78);
         };
         Closing += (_, _) =>
         {
             StopClicking();
+            _ocrCancellation?.Cancel();
             var handle = new WindowInteropHelper(this).Handle;
             UnregisterHotKey(handle, HotkeyF6);
             UnregisterHotKey(handle, HotkeyF8);
@@ -114,7 +96,6 @@ public partial class MainWindow : Window
     }
 
     private void AddPoint_Click(object sender, RoutedEventArgs e) => AddPoint();
-
     private void AddPoint()
     {
         if (_isRunning) { SetStatus("Сначала останови автокликер, чтобы менять точки."); return; }
@@ -148,11 +129,7 @@ public partial class MainWindow : Window
 
     private void PointsGrid_BeginningEdit(object? sender, System.Windows.Controls.DataGridBeginningEditEventArgs e)
     {
-        if (_isRunning)
-        {
-            e.Cancel = true;
-            SetStatus("Останови автокликер перед редактированием.");
-        }
+        if (_isRunning) { e.Cancel = true; SetStatus("Останови автокликер перед редактированием."); }
     }
 
     private async void Start_Click(object sender, RoutedEventArgs e) => await StartClickingAsync();
@@ -164,22 +141,17 @@ public partial class MainWindow : Window
         PointsGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Cell, true);
         PointsGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Row, true);
         if (Points.Count == 0) { SetStatus("Сначала добавь хотя бы одну точку клавишей F6."); return; }
-
         foreach (var point in Points)
         {
             if (!double.IsFinite(point.IntervalSeconds) || !double.IsFinite(point.HoldSeconds) ||
                 point.IntervalSeconds <= 0 || point.IntervalSeconds > 86400 ||
                 point.HoldSeconds <= 0 || point.HoldSeconds > 3600)
-            {
-                SetStatus($"Проверь интервал и удержание точки №{point.Id}.");
-                return;
-            }
+            { SetStatus($"Проверь интервал и удержание точки №{point.Id}."); return; }
         }
 
         var snapshot = Points.Select(p => new ClickPoint
         {
-            Id = p.Id, X = p.X, Y = p.Y,
-            IntervalSeconds = p.IntervalSeconds, HoldSeconds = p.HoldSeconds
+            Id = p.Id, X = p.X, Y = p.Y, IntervalSeconds = p.IntervalSeconds, HoldSeconds = p.HoldSeconds
         }).ToList();
 
         _isRunning = true;
@@ -207,7 +179,6 @@ public partial class MainWindow : Window
                         await Task.Delay(wait < TimeSpan.FromMilliseconds(2) ? TimeSpan.FromMilliseconds(2) : wait, token);
                         continue;
                     }
-
                     token.ThrowIfCancellationRequested();
                     SetCursorPos(point.X, point.Y);
                     SendMouse(MouseLeftDown);
@@ -230,7 +201,7 @@ public partial class MainWindow : Window
             StopButton.IsEnabled = false;
             StatusDot.Fill = new SolidColorBrush(Color.FromRgb(119, 119, 119));
             StatusLabel.Text = "ОСТАНОВЛЕН";
-            StatusText.Text = "Автокликер остановлен.";
+            StatusText.Text = _ocrTriggered ? "Обнаружено задание — автокликер остановлен." : "Автокликер остановлен.";
         }
     }
 
@@ -242,13 +213,62 @@ public partial class MainWindow : Window
         SetStatus("Остановка…");
     }
 
+    private async void OcrStart_Click(object sender, RoutedEventArgs e)
+    {
+        if (_ocrCancellation is not null) return;
+        _ocrTriggered = false;
+        _ocrCancellation = new CancellationTokenSource();
+        OcrStartButton.IsEnabled = false;
+        OcrStopButton.IsEnabled = true;
+        OcrStatusText.Text = "Активно · проверка экрана примерно раз в секунду";
+        var token = _ocrCancellation.Token;
+        try
+        {
+            await Task.Run(() => OcrService.WatchForExampleAsync(async recognized =>
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    _ocrTriggered = true;
+                    StopClicking();
+                    OcrStatusText.Text = "НАЙДЕНО: «Решите пример» · автокликер остановлен";
+                    OcrStartButton.IsEnabled = true;
+                    OcrStopButton.IsEnabled = false;
+                    _ocrCancellation?.Dispose();
+                    _ocrCancellation = null;
+                }).Task;
+            }, token), token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                OcrStatusText.Text = "Ошибка OCR: " + ex.Message;
+                MessageBox.Show(this, ex.Message, "Ошибка распознавания", MessageBoxButton.OK, MessageBoxImage.Error);
+            });
+        }
+        finally
+        {
+            if (_ocrCancellation is not null)
+            {
+                _ocrCancellation.Dispose();
+                _ocrCancellation = null;
+                OcrStartButton.IsEnabled = true;
+                OcrStopButton.IsEnabled = false;
+                if (!_ocrTriggered) OcrStatusText.Text = "Остановлено · поиск фразы «Решите пример»";
+            }
+        }
+    }
+
+    private void OcrStop_Click(object sender, RoutedEventArgs e)
+    {
+        _ocrCancellation?.Cancel();
+        OcrStatusText.Text = "Останавливаем распознавание…";
+    }
+
     private static void SendMouse(uint flags)
     {
-        var input = new Input
-        {
-            Type = InputMouse,
-            Union = new InputUnion { Mouse = new MouseInput { Flags = flags } }
-        };
+        var input = new Input { Type = InputMouse, Union = new InputUnion { Mouse = new MouseInput { Flags = flags } } };
         SendInput(1, new[] { input }, Marshal.SizeOf<Input>());
     }
 
