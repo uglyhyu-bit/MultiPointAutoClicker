@@ -1,6 +1,10 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -39,6 +43,9 @@ public partial class MainWindow : Window
     private bool _isRunning;
     private bool _ocrTriggered;
     private int _nextId = 1;
+    private string _telegramToken = string.Empty;
+    private string _telegramChatId = string.Empty;
+    private static readonly string TelegramSettingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MultiPointAutoClicker", "telegram.json");
 
     public ObservableCollection<ClickPoint> Points { get; } = new();
 
@@ -60,6 +67,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = this;
+        LoadTelegramSettings();
         _hook = WindowHook;
         SourceInitialized += (_, _) =>
         {
@@ -213,6 +221,75 @@ public partial class MainWindow : Window
         SetStatus("Остановка…");
     }
 
+    private void LoadTelegramSettings()
+    {
+        try
+        {
+            if (!File.Exists(TelegramSettingsPath)) return;
+            using var doc = JsonDocument.Parse(File.ReadAllText(TelegramSettingsPath));
+            var root = doc.RootElement;
+            _telegramChatId = root.TryGetProperty("chatId", out var chat) ? chat.GetString() ?? "" : "";
+            var encrypted = root.TryGetProperty("token", out var token) ? token.GetString() : null;
+            if (!string.IsNullOrWhiteSpace(encrypted))
+            {
+                var bytes = ProtectedData.Unprotect(Convert.FromBase64String(encrypted), null, DataProtectionScope.CurrentUser);
+                _telegramToken = Encoding.UTF8.GetString(bytes);
+                TelegramTokenBox.Password = _telegramToken;
+            }
+            TelegramChatIdBox.Text = _telegramChatId;
+            TelegramStatusText.Text = string.IsNullOrWhiteSpace(_telegramToken) ? "Не подключён · введи токен бота" : "Настройки загружены · токен защищён Windows";
+        }
+        catch { TelegramStatusText.Text = "Не удалось прочитать настройки · введи токен заново"; }
+    }
+    private void SaveTelegramSettings()
+    {
+        var entered = TelegramTokenBox.Password.Trim();
+        if (!string.IsNullOrWhiteSpace(entered)) _telegramToken = entered;
+        _telegramChatId = TelegramChatIdBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(_telegramToken)) throw new InvalidOperationException("Сначала введи токен Telegram-бота.");
+        Directory.CreateDirectory(Path.GetDirectoryName(TelegramSettingsPath)!);
+        var data = ProtectedData.Protect(Encoding.UTF8.GetBytes(_telegramToken), null, DataProtectionScope.CurrentUser);
+        File.WriteAllText(TelegramSettingsPath, JsonSerializer.Serialize(new { token = Convert.ToBase64String(data), chatId = _telegramChatId }));
+        TelegramStatusText.Text = "Настройки сохранены локально и защищены Windows.";
+    }
+    private void TelegramSave_Click(object sender, RoutedEventArgs e)
+    { try { SaveTelegramSettings(); } catch (Exception ex) { TelegramStatusText.Text = ex.Message; } }
+    private async void TelegramGetChatId_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            SaveTelegramSettings();
+            TelegramStatusText.Text = "Ищем сообщение от тебя…";
+            var id = await TelegramService.GetLatestChatIdAsync(_telegramToken);
+            if (string.IsNullOrWhiteSpace(id)) { TelegramStatusText.Text = "Сообщение не найдено · отправь боту /start и повтори"; return; }
+            TelegramChatIdBox.Text = id;
+            SaveTelegramSettings();
+            TelegramStatusText.Text = "Chat ID получен · теперь проверь тестовое сообщение.";
+        }
+        catch (Exception ex) { TelegramStatusText.Text = "Telegram: " + ex.Message; }
+    }
+    private async void TelegramTest_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            SaveTelegramSettings();
+            if (string.IsNullOrWhiteSpace(_telegramChatId)) throw new InvalidOperationException("Сначала нажми «Получить Chat ID».");
+            TelegramStatusText.Text = "Отправляем тест…";
+            await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, "MultiPoint AutoClicker подключён! Уведомления будут приходить, когда OCR обнаружит «Решите пример».");
+            TelegramStatusText.Text = "Тест отправлен · проверь Telegram на телефоне.";
+        }
+        catch (Exception ex) { TelegramStatusText.Text = "Не удалось отправить: " + ex.Message; }
+    }
+    private async Task SendTelegramAlertAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_telegramToken) || string.IsNullOrWhiteSpace(_telegramChatId)) { await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "OCR сработал, но Telegram ещё не настроен."); return; }
+        try
+        {
+            await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, "Обнаружена фраза «Решите пример»! Автокликер автоматически остановлен.");
+            await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "Уведомление отправлено в Telegram.");
+        }
+        catch (Exception ex) { await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "Ошибка Telegram: " + ex.Message); }
+    }
     private async void OcrStart_Click(object sender, RoutedEventArgs e)
     {
         if (_ocrCancellation is not null) return;
@@ -236,6 +313,7 @@ public partial class MainWindow : Window
                     _ocrCancellation?.Dispose();
                     _ocrCancellation = null;
                 }).Task;
+                await SendTelegramAlertAsync();
             }, token), token);
         }
         catch (OperationCanceledException) { }
