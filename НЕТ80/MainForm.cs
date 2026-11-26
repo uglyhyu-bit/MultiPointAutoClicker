@@ -15,8 +15,8 @@ public sealed class MainForm : Form
     private readonly List<ClickPoint> _points = new();
     private readonly DataGridView _grid = new();
     private readonly Label _status = new();
-    private readonly Button _start = new();
-    private readonly Button _stop = new();
+    private Button _start = new();
+    private Button _stop = new();
     private readonly System.Windows.Forms.Timer _refresh = new();
     private CancellationTokenSource? _cts;
     private bool _running;
