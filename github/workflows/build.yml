@@ -9,7 +9,6 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,7 +19,11 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Build EXE
-        run: dotnet publish "НЕТ80/MultiPointAutoClicker.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
+        shell: pwsh
+        run: |
+          $project = Get-ChildItem -Path . -Filter MultiPointAutoClicker.csproj -Recurse | Select-Object -First 1
+          if (-not $project) { throw "Project file not found" }
+          dotnet publish $project.FullName -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
