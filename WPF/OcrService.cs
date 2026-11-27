@@ -7,7 +7,7 @@ using Tesseract;
 
 namespace MultiPointAutoClicker;
 
-public sealed record MathTask(string Expression, int CorrectAnswer, int[] Options, int CorrectOptionIndex, int ScreenWidth, int ScreenHeight, string RawText);
+public sealed record MathTask(string Expression, int CorrectAnswer, int[] Options, int CorrectOptionIndex, int ScreenWidth, int ScreenHeight, string RawText, byte[] ScreenshotPng);
 
 public static class OcrService
 {
@@ -38,10 +38,11 @@ public static class OcrService
             using var capture = CaptureCenter();
             using var memory = new MemoryStream();
             capture.Bitmap.Save(memory, System.Drawing.Imaging.ImageFormat.Png);
-            using var pix = Pix.LoadFromMemory(memory.ToArray());
+            var screenshotPng = memory.ToArray();
+            using var pix = Pix.LoadFromMemory(screenshotPng);
             using var page = engine.Process(pix);
             var text = page.GetText() ?? string.Empty;
-            if (TryParseMathTask(text, capture.ScreenWidth, capture.ScreenHeight, out var task))
+            if (TryParseMathTask(text, capture.ScreenWidth, capture.ScreenHeight, screenshotPng, out var task))
             {
                 await onDetected(task!);
                 return;
@@ -74,7 +75,7 @@ public static class OcrService
         catch { bitmap.Dispose(); throw; }
     }
 
-    private static bool TryParseMathTask(string text, int screenWidth, int screenHeight, out MathTask? task)
+    private static bool TryParseMathTask(string text, int screenWidth, int screenHeight, byte[] screenshotPng, out MathTask? task)
     {
         task = null;
         var normalized = text.ToLowerInvariant().Replace('ё', 'е');
@@ -97,7 +98,7 @@ public static class OcrService
         var index = Array.IndexOf(options, answer);
         if (index < 0) return false;
         var expression = $"{match.Groups[1].Value} {match.Groups[2].Value} {match.Groups[3].Value} = ?";
-        task = new MathTask(expression, answer, options, index, screenWidth, screenHeight, text);
+        task = new MathTask(expression, answer, options, index, screenWidth, screenHeight, text, screenshotPng);
         return true;
     }
 
