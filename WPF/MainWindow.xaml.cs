@@ -45,6 +45,8 @@ public partial class MainWindow : Window
     private bool _isRunning;
     private bool _ocrTriggered;
     private MathTask? _pendingMathTask;
+    private bool _resumeClickerAfterAnswer;
+    private int _lastSelectedAnswer;
     private int _nextId = 1;
     private string _telegramToken = string.Empty;
     private string _telegramChatId = string.Empty;
@@ -325,7 +327,7 @@ public partial class MainWindow : Window
                     // Принимаем команды только из личного чата, чей ID сохранён в настройках,
                     // и только от пользователя с тем же Telegram ID.
                     if (update.ChatId != _telegramChatId || update.FromId != _telegramChatId) continue;
-                    await HandleTelegramCommandAsync(update.Text, cancellationToken);
+                    await HandleTelegramCommandAsync(update, cancellationToken);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
@@ -338,8 +340,35 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task HandleTelegramCommandAsync(string? command, CancellationToken cancellationToken)
+    private async Task HandleTelegramCommandAsync(TelegramIncomingUpdate update, CancellationToken cancellationToken)
     {
+        if (!string.IsNullOrWhiteSpace(update.CallbackQueryId))
+        {
+            if (update.CallbackData is not null && update.CallbackData.StartsWith("answer:", StringComparison.Ordinal) &&
+                int.TryParse(update.CallbackData["answer:".Length..], out var selectedIndex))
+            {
+                var clickTask = await Dispatcher.InvokeAsync(() =>
+                {
+                    if (_pendingMathTask is null || selectedIndex < 0 || selectedIndex >= _pendingMathTask.Options.Length)
+                        return Task.FromResult(false);
+                    var pending = _pendingMathTask;
+                    _pendingMathTask = null;
+                    return ClickMathAnswerAsync(pending, selectedIndex);
+                });
+                var clicked = await clickTask;
+                await TelegramService.AnswerCallbackQueryAsync(_telegramToken, update.CallbackQueryId,
+                    clicked ? "Выбор принят. Отправляю ответ в игру." : "Задание уже не ожидает выбора.");
+                await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId,
+                    clicked ? $"Выбран вариант: {await Dispatcher.InvokeAsync(() => _lastSelectedAnswer.ToString())}. Нажимаю «Ответить»." : "Сейчас нет ожидающего задания.");
+            }
+            else
+            {
+                await TelegramService.AnswerCallbackQueryAsync(_telegramToken, update.CallbackQueryId, "Неизвестная команда.");
+            }
+            return;
+        }
+
+        var command = update.Text;
         if (string.IsNullOrWhiteSpace(command)) return;
         var normalized = command.Trim().ToLowerInvariant();
         if (normalized is "да" or "подтверждаю" or "подтвердить ответ" or "ответить")
@@ -357,7 +386,7 @@ public partial class MainWindow : Window
         }
         else if (normalized is "нет" or "отмена" or "отменить")
         {
-            var cancelled = await Dispatcher.InvokeAsync(() => { var hadTask = _pendingMathTask is not null; _pendingMathTask = null; return hadTask; });
+            var cancelled = await Dispatcher.InvokeAsync(() => { var hadTask = _pendingMathTask is not null; _pendingMathTask = null; _resumeClickerAfterAnswer = false; return hadTask; });
             await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, cancelled ? "Ответ отменён. Ничего не нажимал." : "Нет задания для отмены.");
         }
         else if (normalized is "▶ запустить" or "/start_clicker" or "запустить")
@@ -424,38 +453,43 @@ public partial class MainWindow : Window
         }
         try
         {
-            var options = string.Join(" · ", task.Options.Select((value, index) => index == task.CorrectOptionIndex ? $"[{value}]" : value.ToString()));
+            var options = string.Join("  |  ", task.Options);
             var message = "🧮 Найден математический пример\n\n" + task.Expression + "\n" +
-                $"Ответ: {task.CorrectAnswer}\nВарианты: {options}\n\n" +
-                "Проверь распознавание. Напиши ПОДТВЕРЖДАЮ, чтобы выбрать вариант и нажать «Ответить».\n" +
-                "Напиши ОТМЕНА, чтобы ничего не нажимать.";
-            if (!string.IsNullOrWhiteSpace(_alertImagePath) && File.Exists(_alertImagePath))
-                await TelegramService.SendPhotoAsync(_telegramToken, _telegramChatId, _alertImagePath, message);
-            else
-                await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, message);
-            await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "Пример отправлен в Telegram · ожидается подтверждение.");
+                $"Варианты: {options}\n\n" +
+                "Выбери один из вариантов кнопкой ниже. Программа нажмёт выбранный вариант и кнопку «Ответить».";
+            await TelegramService.SendMathTaskAsync(_telegramToken, _telegramChatId, task.ScreenshotPng, message, task.Options);
+            await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "Пример и варианты отправлены · ожидается твой выбор в Telegram.");
         }
         catch (Exception ex) { await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "Ошибка Telegram: " + ex.Message); }
     }
 
-    private void ClickMathAnswer(MathTask task)
+    private async Task<bool> ClickMathAnswerAsync(MathTask task, int selectedIndex)
     {
-        // Геометрия игровой плашки привязана к центру экрана; смещения сняты с шаблона 1914×800.
+        if (selectedIndex < 0 || selectedIndex >= task.Options.Length) return false;
+        _lastSelectedAnswer = task.Options[selectedIndex];
         var screenLeft = GetSystemMetrics(76);
         var screenTop = GetSystemMetrics(77);
         var scale = task.ScreenHeight / 800.0;
         var rowOffsets = new[] { -61.0, -27.0, 6.0, 39.0, 72.0 };
+        if (selectedIndex >= rowOffsets.Length) return false;
         var centerX = screenLeft + task.ScreenWidth / 2;
-        var answerY = screenTop + task.ScreenHeight / 2 + (int)Math.Round(rowOffsets[task.CorrectOptionIndex] * scale);
+        var answerY = screenTop + task.ScreenHeight / 2 + (int)Math.Round(rowOffsets[selectedIndex] * scale);
         var buttonY = screenTop + task.ScreenHeight / 2 + (int)Math.Round(114.0 * scale);
         SetCursorPos(centerX, answerY);
-        SendMouse(MouseLeftDown); SendMouse(MouseLeftUp);
-        _ = Task.Delay(180).ContinueWith(_ => Dispatcher.Invoke(() =>
+        SendMouse(MouseLeftDown);
+        SendMouse(MouseLeftUp);
+        await Task.Delay(180);
+        SetCursorPos(centerX, buttonY);
+        SendMouse(MouseLeftDown);
+        SendMouse(MouseLeftUp);
+        OcrStatusText.Text = $"Выбран вариант {task.Options[selectedIndex]} · нажата кнопка «Ответить»";
+        if (_resumeClickerAfterAnswer)
         {
-            SetCursorPos(centerX, buttonY);
-            SendMouse(MouseLeftDown); SendMouse(MouseLeftUp);
-        }));
-        OcrStatusText.Text = "Подтверждено в Telegram · отправка ответа в игру";
+            _resumeClickerAfterAnswer = false;
+            await Task.Delay(500);
+            await StartClickingAsync();
+        }
+        return true;
     }
 
     private async void OcrStart_Click(object sender, RoutedEventArgs e)
@@ -476,12 +510,11 @@ public partial class MainWindow : Window
                 {
                     _ocrTriggered = true;
                     _pendingMathTask = task;
+                    _resumeClickerAfterAnswer = _isRunning;
                     StopClicking();
                     OcrStatusText.Text = $"НАЙДЕНО: {task.Expression} = {task.CorrectAnswer} · ожидается Telegram";
                     OcrStartButton.IsEnabled = true;
                     OcrStopButton.IsEnabled = false;
-                    _ocrCancellation?.Dispose();
-                    _ocrCancellation = null;
                 }).Task;
                 await SendTelegramMathTaskAsync(task);
             }, token), token);
