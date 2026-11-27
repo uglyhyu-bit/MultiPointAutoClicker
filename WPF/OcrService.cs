@@ -84,7 +84,7 @@ public static class OcrService
     private static bool ContainsAnswerButton(string text)
     {
         var normalized = (text ?? string.Empty).ToLowerInvariant().Replace('ё', 'е');
-        return Regex.IsMatch(normalized, @"(?<![\\p{L}])ответить(?![\\p{L}])");
+        return Regex.IsMatch(normalized, @"(?<!\p{L})ответить(?!\p{L})");
     }
 
     private static bool TryParseMathTask(string text, int screenWidth, int screenHeight, byte[] screenshotPng, out MathTask? task)
