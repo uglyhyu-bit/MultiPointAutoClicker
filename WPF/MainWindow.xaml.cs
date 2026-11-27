@@ -561,9 +561,9 @@ public partial class MainWindow : Window
         {
             await Task.Run(() => OcrService.WatchForExampleAsync(async task =>
             {
-                await Dispatcher.InvokeAsync(() =>
+                var accepted = await Dispatcher.InvokeAsync(() =>
                 {
-                    if (_pendingMathTask is not null) return;
+                    if (_pendingMathTask is not null) return false;
                     _ocrTriggered = true;
                     _pendingMathTask = task;
                     _resumeClickerAfterAnswer = _isRunning;
@@ -572,11 +572,12 @@ public partial class MainWindow : Window
                     OcrStatusText.Text = task.Options.Length > 0
                         ? $"Найдено слово «Ответить» · {task.Expression} · ожидается Telegram"
                         : "Найдено слово «Ответить» · варианты ответа не распознаны";
-                }).Task;
-                await SendTelegramMathTaskAsync(task);
+                    return true;
+                });
+                if (accepted) await SendTelegramMathTaskAsync(task);
             }, token, (png, text) =>
             {
-                _ = Dispatcher.BeginInvoke(() => UpdateDetectionPreview(png, text));
+                _ = Dispatcher.BeginInvoke(new Action(() => UpdateDetectionPreview(png, text)));
             }), token);
         }
         catch (OperationCanceledException) { }
