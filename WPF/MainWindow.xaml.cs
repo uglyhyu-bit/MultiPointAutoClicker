@@ -447,8 +447,16 @@ public partial class MainWindow : Window
         }
         try
         {
+            if (task.Options.Length == 0)
+            {
+                await TelegramService.SendScreenshotAsync(_telegramToken, _telegramChatId, task.ScreenshotPng,
+                    "⏸ OCR обнаружил слово «Ответить» и остановил автокликер, но не смог надёжно распознать варианты ответа. Проверь экран игры.");
+                await Dispatcher.InvokeAsync(() => TelegramStatusText.Text = "Слово «Ответить» найдено · варианты не распознаны.");
+                return;
+            }
+
             var options = string.Join("  |  ", task.Options);
-            var message = "🧮 Найден математический пример\n\n" + task.Expression + "\n" +
+            var message = "⏸ Обнаружено слово «Ответить» — автокликер остановлен\n\n" + task.Expression + "\n" +
                 $"Варианты: {options}\n\n" +
                 "Выбери один из вариантов кнопкой ниже. Программа нажмёт выбранный вариант и кнопку «Ответить».";
             await TelegramService.SendMathTaskAsync(_telegramToken, _telegramChatId, task.ScreenshotPng, message, task.Options);
@@ -494,7 +502,7 @@ public partial class MainWindow : Window
         _ocrCancellation = new CancellationTokenSource();
         OcrStartButton.IsEnabled = false;
         OcrStopButton.IsEnabled = true;
-        OcrStatusText.Text = "Активно · поиск математической плашки в центре экрана";
+        OcrStatusText.Text = "Активно · поиск слова «Ответить» на экране игры";
         var token = _ocrCancellation.Token;
         try
         {
@@ -506,7 +514,9 @@ public partial class MainWindow : Window
                     _pendingMathTask = task;
                     _resumeClickerAfterAnswer = _isRunning;
                     StopClicking();
-                    OcrStatusText.Text = $"НАЙДЕНО: {task.Expression} = {task.CorrectAnswer} · ожидается Telegram";
+                    OcrStatusText.Text = task.Options.Length > 0
+                        ? $"Найдено слово «Ответить» · {task.Expression} · ожидается Telegram"
+                        : "Найдено слово «Ответить» · варианты ответа не распознаны";
                     OcrStartButton.IsEnabled = true;
                     OcrStopButton.IsEnabled = false;
                 }).Task;
@@ -530,7 +540,7 @@ public partial class MainWindow : Window
                 _ocrCancellation = null;
                 OcrStartButton.IsEnabled = true;
                 OcrStopButton.IsEnabled = false;
-                if (!_ocrTriggered) OcrStatusText.Text = "Остановлено · поиск математической плашки";
+                if (!_ocrTriggered) OcrStatusText.Text = "Остановлено · поиск слова «Ответить»";
             }
         }
     }
