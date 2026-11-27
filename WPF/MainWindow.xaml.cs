@@ -10,6 +10,7 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Collections.Generic;
 using Microsoft.Win32;
 
 namespace MultiPointAutoClicker;
@@ -53,6 +54,8 @@ public partial class MainWindow : Window
     private string _alertImagePath = string.Empty;
     private CancellationTokenSource? _telegramPollingCancellation;
     private long _telegramUpdateOffset;
+    private int _detectionCount;
+    private readonly Queue<string> _detectionHistory = new();
     private static readonly string TelegramSettingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MultiPointAutoClicker", "telegram.json");
 
     public ObservableCollection<ClickPoint> Points { get; } = new();
@@ -99,6 +102,7 @@ public partial class MainWindow : Window
             UnregisterHotKey(handle, HotkeyF9);
             HwndSource.FromHwnd(handle)?.RemoveHook(_hook);
         };
+        Closed += (_, _) => { GamePreviewImage.Source = null; };
     }
 
     private IntPtr WindowHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -112,6 +116,53 @@ public partial class MainWindow : Window
             case HotkeyF9: StopClicking(); break;
         }
         return IntPtr.Zero;
+    }
+
+    private void ShowPoints_Click(object sender, RoutedEventArgs e)
+    {
+        MainContentPanel.Visibility = Visibility.Visible;
+        DetectionPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private void ShowDetection_Click(object sender, RoutedEventArgs e)
+    {
+        MainContentPanel.Visibility = Visibility.Collapsed;
+        DetectionPanel.Visibility = Visibility.Visible;
+    }
+
+    private void UpdateDetectionPreview(byte[] png, string recognizedText)
+    {
+        try
+        {
+            using var stream = new MemoryStream(png);
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.DecodePixelWidth = 1000;
+            bitmap.StreamSource = stream;
+            bitmap.EndInit();
+            bitmap.Freeze();
+            GamePreviewImage.Source = bitmap;
+            PreviewLiveLabel.Text = "● LIVE · область OCR";
+            PreviewLiveLabel.Foreground = new SolidColorBrush(Color.FromRgb(170, 210, 170));
+            DetectionOcrStatusText.Text = _ocrCancellation is null ? "Остановлено" : "Сканирование · каждые 0,7 сек.";
+        }
+        catch
+        {
+            PreviewLiveLabel.Text = "Кадр не удалось показать";
+        }
+    }
+
+    private void RegisterDetection(MathTask task)
+    {
+        _detectionCount++;
+        DetectionCountText.Text = _detectionCount.ToString();
+        var entry = $"{DateTime.Now:HH:mm:ss}  ·  найдено «Ответить»" +
+                    (task.Options.Length > 0 ? $"  ·  {task.Expression}" : "  ·  варианты не распознаны");
+        _detectionHistory.Enqueue(entry);
+        while (_detectionHistory.Count > 30) _detectionHistory.Dequeue();
+        DetectionLogList.Items.Clear();
+        foreach (var item in _detectionHistory.Reverse()) DetectionLogList.Items.Add(item);
     }
 
     private void AddPoint_Click(object sender, RoutedEventArgs e) => AddPoint();
@@ -431,7 +482,7 @@ public partial class MainWindow : Window
             SaveTelegramSettings();
             if (string.IsNullOrWhiteSpace(_telegramChatId)) throw new InvalidOperationException("Сначала нажми «Получить Chat ID».");
             TelegramStatusText.Text = "Отправляем тест…";
-            await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, "MultiPoint AutoClicker подключён! OCR ищет математическую плашку в центре экрана. После распознавания пришлёт пример и будет ждать твоего подтверждения.");
+            await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId, "MultiPoint AutoClicker подключён! OCR отслеживает слово «Ответить» и отправляет обнаружение в Telegram для выбора варианта.");
             await TelegramService.SendControlPanelAsync(_telegramToken, _telegramChatId);
             StartTelegramPolling();
             TelegramStatusText.Text = "Тест и пульт управления отправлены · проверь Telegram на телефоне.";
@@ -503,6 +554,8 @@ public partial class MainWindow : Window
         OcrStartButton.IsEnabled = false;
         OcrStopButton.IsEnabled = true;
         OcrStatusText.Text = "Активно · поиск слова «Ответить» на экране игры";
+        DetectionOcrStatusText.Text = "Сканирование · каждые 0,7 сек.";
+        PreviewLiveLabel.Text = "● LIVE · область OCR";
         var token = _ocrCancellation.Token;
         try
         {
@@ -510,18 +563,21 @@ public partial class MainWindow : Window
             {
                 await Dispatcher.InvokeAsync(() =>
                 {
+                    if (_pendingMathTask is not null) return;
                     _ocrTriggered = true;
                     _pendingMathTask = task;
                     _resumeClickerAfterAnswer = _isRunning;
                     StopClicking();
+                    RegisterDetection(task);
                     OcrStatusText.Text = task.Options.Length > 0
                         ? $"Найдено слово «Ответить» · {task.Expression} · ожидается Telegram"
                         : "Найдено слово «Ответить» · варианты ответа не распознаны";
-                    OcrStartButton.IsEnabled = true;
-                    OcrStopButton.IsEnabled = false;
                 }).Task;
                 await SendTelegramMathTaskAsync(task);
-            }, token), token);
+            }, token, (png, text) =>
+            {
+                _ = Dispatcher.BeginInvoke(() => UpdateDetectionPreview(png, text));
+            }), token);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -529,19 +585,19 @@ public partial class MainWindow : Window
             await Dispatcher.InvokeAsync(() =>
             {
                 OcrStatusText.Text = "Ошибка OCR: " + ex.Message;
+                DetectionOcrStatusText.Text = "Ошибка";
                 MessageBox.Show(this, ex.Message, "Ошибка распознавания", MessageBoxButton.OK, MessageBoxImage.Error);
             });
         }
         finally
         {
-            if (_ocrCancellation is not null)
-            {
-                _ocrCancellation.Dispose();
-                _ocrCancellation = null;
-                OcrStartButton.IsEnabled = true;
-                OcrStopButton.IsEnabled = false;
-                if (!_ocrTriggered) OcrStatusText.Text = "Остановлено · поиск слова «Ответить»";
-            }
+            _ocrCancellation?.Dispose();
+            _ocrCancellation = null;
+            OcrStartButton.IsEnabled = true;
+            OcrStopButton.IsEnabled = false;
+            DetectionOcrStatusText.Text = "Остановлено";
+            PreviewLiveLabel.Text = "● LIVE · пауза";
+            if (!_ocrTriggered) OcrStatusText.Text = "Остановлено · поиск слова «Ответить»";
         }
     }
 
