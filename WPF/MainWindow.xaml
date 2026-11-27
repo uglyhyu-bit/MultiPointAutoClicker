@@ -19,10 +19,10 @@
                     <TextBlock Text="MULTIPOINT" FontSize="17" FontWeight="SemiBold"/>
                     <TextBlock Text="AUTOCLICKER" FontSize="10" Foreground="#777777" Margin="0,3,0,30"/>
                     <TextBlock Text="РАБОЧЕЕ ПРОСТРАНСТВО" FontSize="9" Foreground="#777777" Margin="0,0,0,12"/>
-                    <Border Background="#1B1B1B" BorderBrush="#414141" BorderThickness="1"
-                            CornerRadius="4" Padding="10">
-                        <TextBlock Text="◉   Точки клика" FontSize="12" FontWeight="SemiBold"/>
-                    </Border>
+                    <Button x:Name="PointsNavButton" Content="◉   Точки клика" Click="ShowPoints_Click"
+                            HorizontalContentAlignment="Left" Padding="10" FontSize="12" Margin="0,0,0,7"/>
+                    <Button x:Name="DetectionNavButton" Content="◎   Сработка" Click="ShowDetection_Click"
+                            HorizontalContentAlignment="Left" Padding="10" FontSize="12"/>
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Bottom">
                     <Border Height="1" Background="#292929" Margin="0,0,0,14"/>
@@ -48,6 +48,7 @@
         </Border>
 
         <Grid Grid.Column="2">
+            <Grid x:Name="MainContentPanel">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
@@ -192,6 +193,56 @@
                             FontWeight="SemiBold" Padding="22,13" Margin="0,0,8,0"/>
                     <Button x:Name="StopButton" Content="■   СТОП  [F9]" Click="Stop_Click" Padding="22,13" IsEnabled="False"/>
                 </StackPanel>
+            </Grid>
+        </Grid>
+            </Grid>
+            <Grid x:Name="DetectionPanel" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="170"/>
+                </Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Margin="0,2,0,18">
+                    <TextBlock Text="Сработка" FontSize="27" FontWeight="SemiBold"/>
+                    <TextBlock Text="Мониторинг игрового экрана и обнаружений OCR по слову «Ответить»."
+                               FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,7,0,0"/>
+                </StackPanel>
+                <Border Grid.Row="1" Background="#101010" BorderBrush="#292929" BorderThickness="1" CornerRadius="6" Padding="12">
+                    <Grid>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="ИЗОБРАЖЕНИЕ ИГРЫ" FontSize="9" Foreground="#929292" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="PreviewLiveLabel" Grid.Column="1" Text="● LIVE · ожидание" FontSize="9" Foreground="#888888"/>
+                        </Grid>
+                        <Border Grid.Row="1" Background="#080808" BorderBrush="#292929" BorderThickness="1" CornerRadius="4" ClipToBounds="True">
+                            <Image x:Name="GamePreviewImage" Stretch="Uniform"/>
+                        </Border>
+                    </Grid>
+                </Border>
+                <Grid Grid.Row="2" Margin="0,14,0,14">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                    <Border Background="#101010" BorderBrush="#292929" BorderThickness="1" CornerRadius="5" Padding="14">
+                        <StackPanel>
+                            <TextBlock Text="ВСЕГО ОБНАРУЖЕНИЙ" FontSize="9" Foreground="#929292"/>
+                            <TextBlock x:Name="DetectionCountText" Text="0" FontSize="30" FontWeight="SemiBold" Margin="0,5,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="2" Background="#101010" BorderBrush="#292929" BorderThickness="1" CornerRadius="5" Padding="14">
+                        <StackPanel>
+                            <TextBlock Text="СТАТУС OCR" FontSize="9" Foreground="#929292"/>
+                            <TextBlock x:Name="DetectionOcrStatusText" Text="Отключено" FontSize="13" Margin="0,9,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+                <Border Grid.Row="3" Background="#101010" BorderBrush="#292929" BorderThickness="1" CornerRadius="5" Padding="12">
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Top" Text="ЖУРНАЛ СРАБАТЫВАНИЙ" FontSize="9" Foreground="#929292" Margin="0,0,0,8"/>
+                        <ListBox x:Name="DetectionLogList" Background="Transparent" BorderThickness="0"
+                                 Foreground="#D0D0D0" FontSize="10" ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+                    </DockPanel>
+                </Border>
             </Grid>
         </Grid>
     </Grid>
