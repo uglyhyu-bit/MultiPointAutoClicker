@@ -373,16 +373,10 @@ public partial class MainWindow : Window
         var normalized = command.Trim().ToLowerInvariant();
         if (normalized is "да" or "подтверждаю" or "подтвердить ответ" or "ответить")
         {
-            var approved = await Dispatcher.InvokeAsync(() =>
-            {
-                if (_pendingMathTask is null) return false;
-                var pending = _pendingMathTask;
-                _pendingMathTask = null;
-                ClickMathAnswer(pending);
-                return true;
-            });
             await TelegramService.SendMessageAsync(_telegramToken, _telegramChatId,
-                approved ? "Подтверждение принято. Выбран правильный вариант и нажата кнопка «Ответить»." : "Сейчас нет ожидающего задания.");
+                _pendingMathTask is null
+                    ? "Сейчас нет ожидающего задания."
+                    : "Выбери конкретный вариант ответа кнопкой под изображением примера.");
         }
         else if (normalized is "нет" or "отмена" or "отменить")
         {
