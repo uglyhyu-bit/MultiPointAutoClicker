@@ -124,6 +124,21 @@ public static class TelegramService
             throw new InvalidOperationException(ReadError(doc.RootElement));
     }
 
+    public static async Task SendScreenshotAsync(string token, string chatId, byte[] screenshotPng, string caption)
+    {
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(chatId), "chat_id");
+        form.Add(new StringContent(caption), "caption");
+        using var photo = new ByteArrayContent(screenshotPng);
+        photo.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+        form.Add(photo, "photo", "game-detection.png");
+        using var response = await Client.PostAsync("https://api.telegram.org/bot" + token + "/sendPhoto", form);
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+        if (!response.IsSuccessStatusCode || !doc.RootElement.GetProperty("ok").GetBoolean())
+            throw new InvalidOperationException(ReadError(doc.RootElement));
+    }
+
     public static async Task SendMathTaskAsync(string token, string chatId, byte[] screenshotPng, string caption, int[] options)
     {
         var keyboard = new
