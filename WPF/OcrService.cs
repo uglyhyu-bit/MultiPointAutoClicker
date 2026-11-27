@@ -24,7 +24,7 @@ public static class OcrService
         ["девятнадцать"] = 19, ["двадцать"] = 20
     };
 
-    public static async Task WatchForExampleAsync(Func<MathTask, Task> onDetected, CancellationToken token)
+    public static async Task WatchForExampleAsync(Func<MathTask, Task> onDetected, CancellationToken token, Action<byte[], string>? onFrame = null)
     {
         var dataPath = Path.Combine(AppContext.BaseDirectory, "tessdata");
         if (!File.Exists(Path.Combine(dataPath, "rus.traineddata")) || !File.Exists(Path.Combine(dataPath, "eng.traineddata")))
@@ -32,6 +32,8 @@ public static class OcrService
 
         using var engine = new TesseractEngine(dataPath, "rus+eng", EngineMode.Default);
         engine.DefaultPageSegMode = PageSegMode.SparseText;
+        var triggerLatched = false;
+        var absentScans = 0;
         while (!token.IsCancellationRequested)
         {
             token.ThrowIfCancellationRequested();
@@ -42,16 +44,27 @@ public static class OcrService
             using var pix = Pix.LoadFromMemory(screenshotPng);
             using var page = engine.Process(pix);
             var text = page.GetText() ?? string.Empty;
-            // Главный триггер остановки — именно слово «Ответить», а не появление математической плашки.
+            onFrame?.Invoke(screenshotPng, text);
+            // Срабатываем один раз на появление слова. Повторно разрешаем срабатывание,
+            // только когда OCR не видит «Ответить» в двух последовательных кадрах.
             if (ContainsAnswerButton(text))
             {
-                if (!TryParseMathTask(text, capture.ScreenWidth, capture.ScreenHeight, screenshotPng, out var task))
+                absentScans = 0;
+                if (!triggerLatched)
                 {
-                    task = new MathTask("Пример не удалось распознать", 0, Array.Empty<int>(), -1,
-                        capture.ScreenWidth, capture.ScreenHeight, text, screenshotPng);
+                    triggerLatched = true;
+                    if (!TryParseMathTask(text, capture.ScreenWidth, capture.ScreenHeight, screenshotPng, out var task))
+                    {
+                        task = new MathTask("Пример не удалось распознать", 0, Array.Empty<int>(), -1,
+                            capture.ScreenWidth, capture.ScreenHeight, text, screenshotPng);
+                    }
+                    await onDetected(task!);
                 }
-                await onDetected(task!);
-                return;
+            }
+            else if (triggerLatched)
+            {
+                absentScans++;
+                if (absentScans >= 2) triggerLatched = false;
             }
             await Task.Delay(700, token);
         }
