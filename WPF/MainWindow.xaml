@@ -135,7 +135,7 @@
                     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <StackPanel>
                         <TextBlock Text="РАСПОЗНАВАНИЕ ЭКРАНА · OCR" FontSize="9" Foreground="#929292"/>
-                        <TextBlock x:Name="OcrStatusText" Text="Отключено · поиск математической плашки в центре экрана"
+                        <TextBlock x:Name="OcrStatusText" Text="Отключено · поиск слова «Ответить» на экране игры"
                                    FontSize="11" Foreground="#D0D0D0" Margin="0,6,12,0"/>
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
@@ -177,7 +177,7 @@
                         <TextBlock x:Name="AlertImageName" Grid.Column="1" Text="Картинка не выбрана" FontSize="10" Foreground="#BDBDBD" VerticalAlignment="Center" Margin="10,0"/>
                         <Button Grid.Column="2" Content="ВЫБРАТЬ КАРТИНКУ" Click="ChooseAlertImage_Click" Padding="12,9" FontSize="9"/>
                     </Grid>
-                    <TextBlock Text="В Telegram доступны команды запуска и остановки. Для математического задания ответ подтверждается сообщением ПОДТВЕРЖДАЮ или отменяется командой ОТМЕНА." FontSize="9" Foreground="#777777" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                    <TextBlock Text="В Telegram доступны команды запуска и остановки. После обнаружения слова «Ответить» выбери вариант ответа кнопкой в Telegram." FontSize="9" Foreground="#777777" Margin="0,10,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>
             <Grid Grid.Row="6" Margin="0,18,0,0">
