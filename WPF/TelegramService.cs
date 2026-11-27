@@ -6,7 +6,7 @@ using System.Text.Json;
 
 namespace MultiPointAutoClicker;
 
-public sealed record TelegramIncomingUpdate(long UpdateId, string? ChatId, string? FromId, string? Text);
+public sealed record TelegramIncomingUpdate(long UpdateId, string? ChatId, string? FromId, string? Text, string? CallbackQueryId, string? CallbackData);
 
 public static class TelegramService
 {
@@ -30,7 +30,7 @@ public static class TelegramService
 
     public static async Task<List<TelegramIncomingUpdate>> GetUpdatesAsync(string token, long offset, CancellationToken cancellationToken)
     {
-        var url = "https://api.telegram.org/bot" + token + "/getUpdates?timeout=20&allowed_updates=%5B%22message%22%5D";
+        var url = "https://api.telegram.org/bot" + token + "/getUpdates?timeout=20&allowed_updates=%5B%22message%22%2C%22callback_query%22%5D";
         if (offset > 0) url += "&offset=" + offset;
         using var response = await Client.GetAsync(url, cancellationToken);
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -42,12 +42,32 @@ public static class TelegramService
         foreach (var update in root.GetProperty("result").EnumerateArray())
         {
             var updateId = update.GetProperty("update_id").GetInt64();
-            if (!update.TryGetProperty("message", out var message)) { result.Add(new(updateId, null, null, null)); continue; }
+            if (update.TryGetProperty("callback_query", out var callback))
+            {
+                string? callbackId = callback.TryGetProperty("id", out var callbackIdValue) ? callbackIdValue.GetString() : null;
+                string? callbackData = callback.TryGetProperty("data", out var callbackDataValue) ? callbackDataValue.GetString() : null;
+                string? callbackChatId = null, callbackFromId = null;
+                if (callback.TryGetProperty("message", out var callbackMessage) &&
+                    callbackMessage.TryGetProperty("chat", out var callbackChat) &&
+                    callbackChat.TryGetProperty("id", out var callbackChatValue))
+                    callbackChatId = callbackChatValue.ToString();
+                if (callback.TryGetProperty("from", out var callbackFrom) &&
+                    callbackFrom.TryGetProperty("id", out var callbackFromValue))
+                    callbackFromId = callbackFromValue.ToString();
+                result.Add(new(updateId, callbackChatId, callbackFromId, null, callbackId, callbackData));
+                continue;
+            }
+
+            if (!update.TryGetProperty("message", out var message))
+            {
+                result.Add(new(updateId, null, null, null, null, null));
+                continue;
+            }
             string? chatId = null, fromId = null, text = null;
             if (message.TryGetProperty("chat", out var chat) && chat.TryGetProperty("id", out var chatValue)) chatId = chatValue.ToString();
             if (message.TryGetProperty("from", out var from) && from.TryGetProperty("id", out var fromValue)) fromId = fromValue.ToString();
             if (message.TryGetProperty("text", out var textValue)) text = textValue.GetString();
-            result.Add(new(updateId, chatId, fromId, text));
+            result.Add(new(updateId, chatId, fromId, text, null, null));
         }
         return result;
     }
@@ -98,6 +118,41 @@ public static class TelegramService
         photo.Headers.ContentType = new MediaTypeHeaderValue(GetMimeType(photoPath));
         form.Add(photo, "photo", Path.GetFileName(photoPath));
         using var response = await Client.PostAsync("https://api.telegram.org/bot" + token + "/sendPhoto", form);
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+        if (!response.IsSuccessStatusCode || !doc.RootElement.GetProperty("ok").GetBoolean())
+            throw new InvalidOperationException(ReadError(doc.RootElement));
+    }
+
+    public static async Task SendMathTaskAsync(string token, string chatId, byte[] screenshotPng, string caption, int[] options)
+    {
+        var keyboard = new
+        {
+            inline_keyboard = options.Select((value, index) => new[]
+            {
+                new { text = value.ToString(), callback_data = "answer:" + index }
+            }).ToArray()
+        };
+        var markup = JsonSerializer.Serialize(keyboard);
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(chatId), "chat_id");
+        form.Add(new StringContent(caption), "caption");
+        form.Add(new StringContent(markup), "reply_markup");
+        using var photo = new ByteArrayContent(screenshotPng);
+        photo.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+        form.Add(photo, "photo", "game-detection.png");
+        using var response = await Client.PostAsync("https://api.telegram.org/bot" + token + "/sendPhoto", form);
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+        if (!response.IsSuccessStatusCode || !doc.RootElement.GetProperty("ok").GetBoolean())
+            throw new InvalidOperationException(ReadError(doc.RootElement));
+    }
+
+    public static async Task AnswerCallbackQueryAsync(string token, string callbackQueryId, string message)
+    {
+        var payload = JsonSerializer.Serialize(new { callback_query_id = callbackQueryId, text = message, show_alert = false });
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var response = await Client.PostAsync("https://api.telegram.org/bot" + token + "/answerCallbackQuery", content);
         var json = await response.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(json);
         if (!response.IsSuccessStatusCode || !doc.RootElement.GetProperty("ok").GetBoolean())
