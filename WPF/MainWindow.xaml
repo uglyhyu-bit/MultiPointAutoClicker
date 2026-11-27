@@ -195,7 +195,6 @@
                 </StackPanel>
             </Grid>
         </Grid>
-            </Grid>
             <Grid x:Name="DetectionPanel" Visibility="Collapsed">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -243,6 +242,7 @@
                                  Foreground="#D0D0D0" FontSize="10" ScrollViewer.VerticalScrollBarVisibility="Auto"/>
                     </DockPanel>
                 </Border>
+            </Grid>
             </Grid>
         </Grid>
     </Grid>
