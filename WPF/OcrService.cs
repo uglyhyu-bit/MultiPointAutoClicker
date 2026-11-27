@@ -42,8 +42,14 @@ public static class OcrService
             using var pix = Pix.LoadFromMemory(screenshotPng);
             using var page = engine.Process(pix);
             var text = page.GetText() ?? string.Empty;
-            if (TryParseMathTask(text, capture.ScreenWidth, capture.ScreenHeight, screenshotPng, out var task))
+            // Главный триггер остановки — именно слово «Ответить», а не появление математической плашки.
+            if (ContainsAnswerButton(text))
             {
+                if (!TryParseMathTask(text, capture.ScreenWidth, capture.ScreenHeight, screenshotPng, out var task))
+                {
+                    task = new MathTask("Пример не удалось распознать", 0, Array.Empty<int>(), -1,
+                        capture.ScreenWidth, capture.ScreenHeight, text, screenshotPng);
+                }
                 await onDetected(task!);
                 return;
             }
@@ -61,7 +67,7 @@ public static class OcrService
         var left = GetSystemMetrics(SmXVirtualScreen); var top = GetSystemMetrics(SmYVirtualScreen);
         var width = GetSystemMetrics(SmCxVirtualScreen); var height = GetSystemMetrics(SmCyVirtualScreen);
         if (width <= 0 || height <= 0) throw new InvalidOperationException("Не удалось определить размер экрана.");
-        // Плашка игры находится по центру. Захватываем только центральную область, чтобы ускорить OCR.
+        // Игровая кнопка «Ответить» и область задания находятся в центральной части экрана.
         var cropWidth = Math.Min(width, (int)(width * 0.34));
         var cropHeight = Math.Min(height, (int)(height * 0.62));
         var x = left + (width - cropWidth) / 2; var y = top + (height - cropHeight) / 2;
@@ -73,6 +79,12 @@ public static class OcrService
             return new(bitmap, width, height);
         }
         catch { bitmap.Dispose(); throw; }
+    }
+
+    private static bool ContainsAnswerButton(string text)
+    {
+        var normalized = (text ?? string.Empty).ToLowerInvariant().Replace('ё', 'е');
+        return Regex.IsMatch(normalized, @"(?<![\\p{L}])ответить(?![\\p{L}])");
     }
 
     private static bool TryParseMathTask(string text, int screenWidth, int screenHeight, byte[] screenshotPng, out MathTask? task)
